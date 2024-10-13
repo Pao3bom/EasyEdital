@@ -9,3 +9,4 @@ dependencies:
   - ipykernel
   - scikit-learn
   - nltk
+  - setence-transformers
