@@ -16,7 +16,8 @@ RUN apt-get update && apt-get install -y \
     scipy \
     scikit-learn \
     matplotlib \
-    jupyterlab
+    jupyterlab \
+    transformers
 
 # Copy the Jupyter config to the container
 COPY jupyter_lab_config.py /root/.jupyter/jupyter_lab_config.py
