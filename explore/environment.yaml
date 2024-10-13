@@ -8,3 +8,4 @@ dependencies:
   - numpy
   - ipykernel
   - scikit-learn
+  - matplotlib
