@@ -1,12 +1,12 @@
 import argparse
 
 try:
-    from ezlib.pre import preprocess_all
+    from ezlib.preproc import preprocess_all
 except ImportError:
     import sys
     sys.path.append("../")  # Add parent directory to path
     sys.path.append("./")  # Add current directory to path
-    from ezlib.pre import preprocess_all
+    from ezlib.preproc import preprocess_all
 
 def main():
     # Set up argument parser
