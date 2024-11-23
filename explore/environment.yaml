@@ -10,3 +10,5 @@ dependencies:
   - scikit-learn
   - matplotlib
   - tqdm
+  - nltk
+  - sentence-transformers

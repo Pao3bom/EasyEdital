@@ -25,4 +25,6 @@ pandas
 numpy
 ipykernel
 scikit-learn
+nltk
+sentence-transformers
 ```
