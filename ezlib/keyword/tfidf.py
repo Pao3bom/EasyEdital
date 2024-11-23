@@ -241,6 +241,16 @@ def tf_idf(total_frequency, qtd_docs, local_frequency):
 def generate_tdidf(
         filepath: str, keywords: dict,
         cache_directory: str = CACHE_DIRECTORY):
+    """
+    Generates a TF-IDF value for each keyword in the given file.
+
+    Parameters:
+        filepath (str): Path to the file.
+        keywords (dict): Dictionary of valid keywords containing (Word) => (Global sum, Local sum)
+        for the given file. That is, each keyword should come with its global count across the
+        files and the count in the given file.
+        cache_directory (str): Directory where the files of the program are being saved.
+    """
 
     if cache_directory[-1] == '/':
         cache_directory = cache_directory[:-1]
@@ -262,5 +272,12 @@ def generate_tdidf(
     text_tfidf = {}
     for word, count in text_keywords:
         text_tfidf[word] = tf_idf(keywords[word][0], keywords[word][1], count)
+    
+    os.makedirs(f'{cache_directory}/{filepath}/', exist_ok=True)
+    with open(f'{cache_directory}/{filepath}/tfidf.csv') as f:
+        writer = csv.writer(f)
+
+        for word, value in text_tfidf.values():
+            writer.writerow([word, value])
     
     
