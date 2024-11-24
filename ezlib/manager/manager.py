@@ -14,6 +14,20 @@ from datetime import datetime
 import torch
 from transformers import AutoTokenizer, AutoModel
 from sentence_transformers import SentenceTransformer
+from fuzzywuzzy import fuzz, process
+import numpy as np
+from sklearn.metrics.pairwise import cosine_similarity
+
+
+
+def preproc_global_bag(global_bag : pd.DataFrame) -> pd.DataFrame:
+    # return empty dataframe for now
+    return pd.DataFrame()
+
+def tfdf_stuff(indivual_bag : pd.DataFrame, global_bag : pd.DataFrame) -> pd.DataFrame:
+    # return empty dataframe for now
+    return pd.DataFrame()
+
 
 
 class EzManager:
@@ -75,6 +89,19 @@ class EzManager:
             path for path in self.__watch_dir.rglob("*")
             if path.is_file() and path.suffix.lower() in (ext.lower() for ext in whitelist)
         ]
+
+    async def load_global(self, property_name: str) -> str | pd.DataFrame:
+        """Load a global property from the cache."""
+        try:
+            global_path = self.__global_dir / property_name
+            if "csv" in property_name:
+                return pd.read_csv(global_path)
+            async with aiofiles.open(global_path, "r") as f:
+                return await f.read()
+        except Exception as e:
+            self.logger.error(f"Failed to load global property '{property_name}': {e}")
+            raise e
+        
 
     def preprocess(self) -> None:
         """Synchronous wrapper for preproc_all."""
@@ -166,8 +193,10 @@ class EzManager:
                 await meta_file.write(json.dumps(meta_data, indent=4))
         except Exception as e:
             self.logger.error(f"Failed to write metadata for {file}: {e}")
-            
-            
+    
+    
+    
+    
     async def gen_embeddings(self, file: Path, content = None, force: bool = False) -> None:
         """
         Generate embeddings for a file and store them in the cache.
@@ -257,6 +286,46 @@ class EzManager:
         finally:
             # Save metadata about the file
             await self.gen_metadata(file, parsing_success, is_scanned, error_message)
+            
+            
+    async def process_file_2(self, file: Path, material, io_executor, cpu_executor: ProcessPoolExecutor):
+        """
+        Perform the second wave of processing for an individual file.
+        - Applies the `tfdf_stuff` function using the global bag-of-words.
+        - Saves the individual TFDF file.
+        
+        Args:
+            file (Path): The path to the file to process.
+            material (dict): Contains pre-loaded global data (e.g., global_bag).
+            io_executor (ThreadPoolExecutor): Executor for IO-bound tasks.
+            cpu_executor (ProcessPoolExecutor): Executor for CPU-bound tasks.
+        """
+        try:
+            # Load individual bag-of-words
+            bow_path = self.property_path(file, "bag_of_words.csv")
+            if not bow_path.exists():
+                self.logger.warning(f"Bag-of-words not found for {file}. Skipping.")
+                return
+            
+            indiv_bag = await asyncio.to_thread(pd.read_csv, bow_path)
+
+            # Retrieve global bag-of-words from material
+            global_bag = material.get('global_bag')
+            if global_bag is None:
+                self.logger.error("Global bag-of-words is missing. Skipping.")
+                return
+
+            # Apply the `tfdf_stuff` function
+            tfdf_result = await asyncio.to_thread(tfdf_stuff, indiv_bag, global_bag)
+
+            # Save the resulting TFDF data
+            tfdf_path = self.property_path(file, "tfdf.csv")
+            await asyncio.to_thread(tfdf_result.to_csv, tfdf_path, index=False)
+            self.logger.info(f"TFDF saved for {file} at {tfdf_path}.")
+
+        except Exception as e:
+            self.logger.error(f"Error in second wave processing for {file}: {e}")
+
 
     async def gen_global_bag_of_words(self):
         """
@@ -315,6 +384,12 @@ class EzManager:
 
         # Generate global metadata
         await self.gen_global_metadata(all_errors)
+        
+        # td-df on global bag
+        global_bag = await self.load_global("global_bag_of_words.csv")
+        global_tfdf = await asyncio.to_thread(preproc_global_bag, global_bag)
+        await self.store_global("global_tfdf.csv", global_tfdf)
+        
 
     async def preproc_all(self) -> None:
         """Preprocess all files and perform global processing."""
@@ -336,7 +411,146 @@ class EzManager:
         
         # First wave of global processing
         await self.global_processing()
+        
+        # Second wave of individual file processing
+        material = {
+            'global_bag': await self.load_global("global_bag_of_words.csv"),
+        }
+
+        with ThreadPoolExecutor(max_workers=self.max_threads) as io_executor, \
+            ProcessPoolExecutor(max_workers=self.max_processes) as cpu_executor:
+            tasks = [self.process_file_2(file, material, io_executor, cpu_executor) for file in files]
+            await self._with_progress_bar(tasks, self.total_files)
+
+                
 
     async def _with_progress_bar(self, tasks: list[asyncio.Task], total_files: int):
         """Wrap tasks with a progress bar for feedback."""
         await async_tqdm.gather(*tasks, desc="Processing Files", total=total_files, unit="files")
+
+
+    async def fuzzy_search_text(self, query: str, threshold: int = 80) -> list[dict]:
+        """
+        Perform fuzzy search on cached text transcripts, matching by path, file name, or file contents.
+        
+        Args:
+            query (str): The search query.
+            threshold (int): Minimum similarity score to include in the results.
+
+        Returns:
+            list[dict]: A list of matches with their file paths, names, and scores.
+        """
+        results = []
+
+        for file in self.files():
+            try:
+                # Get cached text
+                text = await self.get_text(file)
+                file_name_score = fuzz.partial_ratio(query, file.name)
+                file_path_score = fuzz.partial_ratio(query, str(file))
+                content_score = fuzz.partial_ratio(query, text)
+
+                # Aggregate scores
+                if max(file_name_score, file_path_score, content_score) >= threshold:
+                    results.append({
+                        "file_path": str(file),
+                        "file_name": file.name,
+                        "file_path_score": file_path_score,
+                        "file_name_score": file_name_score,
+                        "content_score": content_score,
+                    })
+                
+                
+            except Exception as e:
+                self.logger.error(f"Failed to search file {file}: {e}")
+        
+        return sorted(results, key=lambda x: max(x["file_path_score"], x["file_name_score"], x["content_score"]), reverse=True)
+
+    async def search_using_embeddings(self, query: str, top_k: int = 5) -> list[dict]:
+        """
+        Perform semantic search using cached embeddings.
+        
+        Args:
+            query (str): The search query.
+            top_k (int): Number of top results to return.
+
+        Returns:
+            list[dict]: A list of matches with their file paths, names, and similarity scores.
+        """
+        query_embedding = self.model.encode(query.lower(), device="cuda" if torch.cuda.is_available() else "cpu")
+        query_embedding = query_embedding.reshape(1, -1)  # Reshape for cosine similarity calculation
+
+        matches = []
+
+        for file in self.files():
+            try:
+                # Load cached embeddings
+                embed_path = self.property_path(file, "embeddings.json")
+                if not embed_path.exists():
+                    self.logger.warning(f"Embeddings not found for {file}. Skipping.")
+                    continue
+                
+                async with aiofiles.open(embed_path, "r") as f:
+                    file_embedding = np.array(json.loads(await f.read()))
+
+                # Calculate similarity
+                similarity_score = cosine_similarity(query_embedding, file_embedding.reshape(1, -1)).item()
+                matches.append({
+                    "file_path": str(file),
+                    "file_name": file.name,
+                    "similarity_score": similarity_score,
+                })
+            except Exception as e:
+                self.logger.error(f"Failed to perform embedding search for {file}: {e}")
+
+        return sorted(matches, key=lambda x: x["similarity_score"], reverse=True)[:top_k]
+
+
+    async def search(
+        self,
+        query: str,
+        threshold: int = 80,
+        top_k: int = 5,
+        use_fuzzy: bool = True,
+        use_embeddings: bool = True
+    ) -> list[dict]:
+        """
+        Perform a combined search using both fuzzy matching and embeddings.
+
+        Args:
+            query (str): The search query.
+            threshold (int): Minimum similarity score for fuzzy search results.
+            top_k (int): Number of top results to return from embeddings.
+            use_fuzzy (bool): Whether to include fuzzy search in the results.
+            use_embeddings (bool): Whether to include embedding-based search in the results.
+
+        Returns:
+            list[dict]: A list of combined search results, ranked by relevance.
+        """
+        results = []
+
+        if use_fuzzy:
+            self.logger.info("Performing fuzzy search...")
+            fuzzy_results = await self.fuzzy_search_text(query, threshold=threshold)
+            for res in fuzzy_results:
+                res["type"] = "fuzzy"
+                res["relevance"] = max(res["file_path_score"], res["file_name_score"], res["content_score"])
+                results.append(res)
+
+        if use_embeddings:
+            self.logger.info("Performing semantic search using embeddings...")
+            embed_results = await self.search_using_embeddings(query, top_k=top_k)
+            for res in embed_results:
+                res["type"] = "embedding"
+                res["relevance"] = res["similarity_score"]
+                results.append(res)
+
+        # Combine, deduplicate, and rank results by relevance
+        seen_paths = set()
+        combined_results = []
+        for res in sorted(results, key=lambda x: x["relevance"], reverse=True):
+            if res["file_path"] not in seen_paths:
+                combined_results.append(res)
+                seen_paths.add(res["file_path"])
+
+        return combined_results

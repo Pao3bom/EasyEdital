@@ -1,5 +1,5 @@
 from ezlib import EzManager
-
+import asyncio
 
 
 
@@ -11,6 +11,11 @@ def main():
     cache_dir = "cache"
     manager = EzManager(watch_dir, cache_dir)
     manager.preprocess()
+    
+    query = input("Enter a search query: ")
+    results = asyncio.run(manager.search(query))
+    
+    print(results)
     
 # # def main():
 #     import pypandoc
