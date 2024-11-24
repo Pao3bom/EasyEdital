@@ -1,0 +1,9 @@
+aiofiles
+PyMuPDF
+pypandoc
+python-docx
+pytesseract
+pdf2image
+beautifulsoup4
+tqdm
+pandas
