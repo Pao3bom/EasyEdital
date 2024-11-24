@@ -11,6 +11,9 @@ import logging
 import psutil  # For dynamic system load monitoring
 import json
 from datetime import datetime
+import torch
+from transformers import AutoTokenizer, AutoModel
+from sentence_transformers import SentenceTransformer
 
 
 class EzManager:
@@ -24,7 +27,14 @@ class EzManager:
     - Perform global file processing tasks.
     - Maintain a structured cache for processed properties.
     """
-    def __init__(self, watch_dir: str | Path, cache_dir: str | Path, max_threads=None, max_processes=None):
+    def __init__(
+        self, 
+        watch_dir: str | Path, 
+        cache_dir: str | Path, 
+        max_threads=None, 
+        max_processes=None, 
+        model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    ) -> None:
         self.__watch_dir = Path(watch_dir)
         self.__cache_dir = Path(cache_dir)
         
@@ -46,6 +56,9 @@ class EzManager:
 
         # Set worker limits
         self.max_threads, self.max_processes = self.calculate_limits(max_threads, max_processes)
+        
+        # Initialize the embedding model
+        self.model = SentenceTransformer(model_name, device="cuda" if torch.cuda.is_available() else "cpu")
 
     def calculate_limits(self, max_threads, max_processes):
         """Calculate reasonable limits for threads and processes."""
@@ -153,6 +166,71 @@ class EzManager:
                 await meta_file.write(json.dumps(meta_data, indent=4))
         except Exception as e:
             self.logger.error(f"Failed to write metadata for {file}: {e}")
+            
+            
+    async def gen_embeddings(self, file: Path, content = None, force: bool = False) -> None:
+        """
+        Generate embeddings for a file and store them in the cache.
+        """
+        property_path = self.property_path(file, "embeddings.json")
+        if not force and property_path.exists():
+            return
+        
+        if content is None:
+            content = await self.get_text(file)
+
+        try:
+            # Generate embeddings
+            embeddings = self.model.encode(content.lower(), device="cuda" if torch.cuda.is_available() else "cpu")
+            embeddings = embeddings.tolist()  # Convert to list for JSON serialization
+
+            # Save embeddings
+            async with aiofiles.open(property_path, "w") as f:
+                await f.write(json.dumps(embeddings))
+        except Exception as e:
+            self.logger.error(f"Failed to generate embeddings for {file}: {e}")
+            raise e
+
+    async def gen_global_embeddings(self) -> list[dict]:
+        """
+        Aggregate embeddings for all files into a single global JSON file.
+        
+        Returns:
+            error_files (list[dict]): List of files with errors during embedding aggregation.
+        """
+        self.logger.info("Generating global embeddings...")
+        global_embeddings = {}
+        error_files = []
+
+        for file in self.files():
+            try:
+                # Check if embeddings for the file exist
+                property_path = self.property_path(file, "embeddings.json")
+                if not property_path.exists():
+                    self.logger.warning(f"Embeddings not found for {file}. Skipping.")
+                    continue
+
+                # Read embeddings from the cache
+                async with aiofiles.open(property_path, "r") as f:
+                    embeddings = await f.read()
+                    global_embeddings[file.name] = json.loads(embeddings)
+            except Exception as e:
+                error_msg = f"Failed to read embeddings for {file}: {e}"
+                self.logger.error(error_msg)
+                error_files.append({"file": str(file), "error": error_msg})
+
+        # Save aggregated global embeddings
+        try:
+            global_path = self.__global_dir / "global_embeddings.json"
+            async with aiofiles.open(global_path, "w") as f:
+                await f.write(json.dumps(global_embeddings, indent=4))
+            self.logger.info(f"Global embeddings saved to {global_path}.")
+        except Exception as e:
+            self.logger.error(f"Failed to save global embeddings: {e}")
+            raise e
+
+        return error_files
+
 
     async def process_file_1(self, file: Path, io_executor, cpu_executor: ProcessPoolExecutor):
         """Process a single file by generating its text, bag-of-words, and metadata."""
@@ -164,9 +242,13 @@ class EzManager:
             content = await self.get_text(file, cpu_executor)
             parsing_success = bool(content and not content.isspace())
             is_scanned = is_scanned_pdf(file, content)
-
-            # Generate bag-of-words
-            await self.gen_bag_of_words(file, content, io_executor)
+            
+            if parsing_success:
+                # Generate bag-of-words
+                await self.gen_bag_of_words(file, content, io_executor)
+                
+                # Generate embeddings
+                await self.gen_embeddings(file, content)
 
         except Exception as e:
             error_message = str(e)
@@ -176,12 +258,14 @@ class EzManager:
             # Save metadata about the file
             await self.gen_metadata(file, parsing_success, is_scanned, error_message)
 
-    async def global_processing(self):
-        """Perform global processing tasks."""
+    async def gen_global_bag_of_words(self):
+        """
+        Generate a global bag-of-words by combining individual bag-of-words.
+        """
         self.logger.info("Generating global bag-of-words...")
         global_bow = pd.DataFrame(columns=["word", "count"])
         error_files = []
-        
+
         for file in self.files():
             try:
                 bow_path = self.property_path(file, "bag_of_words.csv")
@@ -193,8 +277,15 @@ class EzManager:
                 self.logger.error(f"Failed to process bag-of-words for {file}: {e}")
                 error_files.append({"file": str(file), "error": str(e)})
 
+        # Save global bag-of-words
         await self.store_global("global_bag_of_words.csv", global_bow)
 
+        return error_files
+
+    async def gen_global_metadata(self, error_files):
+        """
+        Generate global metadata summarizing the processing results.
+        """
         self.logger.info("Generating global metadata...")
         global_meta = {
             "total_files": self.total_files,
@@ -205,6 +296,25 @@ class EzManager:
         }
 
         await self.store_global("global_meta.json", json.dumps(global_meta, indent=4))
+
+    async def global_processing(self):
+        """
+        Perform all global processing tasks:
+        - Generate global bag-of-words.
+        - Generate global embeddings.
+        - Generate global metadata.
+        """
+        # Generate global bag-of-words and collect errors
+        bow_error_files = await self.gen_global_bag_of_words()
+
+        # Generate global embeddings and collect errors
+        embed_error_files = await self.gen_global_embeddings()
+
+        # Combine errors from all global tasks
+        all_errors = bow_error_files + embed_error_files
+
+        # Generate global metadata
+        await self.gen_global_metadata(all_errors)
 
     async def preproc_all(self) -> None:
         """Preprocess all files and perform global processing."""
@@ -217,12 +327,14 @@ class EzManager:
 
         self.logger.info(f"Processing {self.total_files} files from {self.__watch_dir}.")
         self.logger.info(f"Using {self.max_threads} threads and {self.max_processes} processes.")
-
+        
+        # First wave of individual file processing
         with ThreadPoolExecutor(max_workers=self.max_threads) as io_executor, \
              ProcessPoolExecutor(max_workers=self.max_processes) as cpu_executor:
             tasks = [self.process_file_1(file, io_executor, cpu_executor) for file in files]
             await self._with_progress_bar(tasks, self.total_files)
         
+        # First wave of global processing
         await self.global_processing()
 
     async def _with_progress_bar(self, tasks: list[asyncio.Task], total_files: int):
