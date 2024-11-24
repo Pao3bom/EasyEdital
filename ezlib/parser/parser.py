@@ -31,7 +31,7 @@ async def parse_text(file_path):
             )
 
         case '.doc':
-            return await asyncio.to_thread(extract_text_from_doc, file_path)
+            return extract_text_from_doc(file_path)
 
         case '.rtf':
             return await asyncio.to_thread(parse_rtf_with_striprtf, file_path)
@@ -67,7 +67,10 @@ def parse_rtf_with_striprtf(file_path):
 import shutil
 import hashlib
 
-def extract_text_from_doc(filepath):
+
+
+
+def extract_text_from_doc(filepath, retry_limit=5):
     # Convert PosixPath to string if necessary
     filepath = str(filepath)
 
@@ -83,41 +86,45 @@ def extract_text_from_doc(filepath):
     temp_doc_path = os.path.join(temp_dir, os.path.basename(filepath))
     predicted_docx_path = os.path.splitext(temp_doc_path)[0] + ".docx"
 
-    try:
-        # Copy the original file to the temporary directory
-        shutil.copy(filepath, temp_doc_path)
-        print(f"Converting: {temp_doc_path}")
+    attempts = 0
 
-        # Convert .doc to .docx using LibreOffice
-        result = subprocess.run(
-            ['libreoffice', '--headless', '--convert-to', 'docx', temp_doc_path, '--outdir', temp_dir],
-            check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
+    while attempts <= retry_limit:
+        try:
+            # Copy the original file to the temporary directory
+            shutil.copy(filepath, temp_doc_path)
+            print(f"Attempt {attempts + 1}: Converting {temp_doc_path}")
 
-        # Check if conversion was successful
-        if result.returncode != 0 or not os.path.exists(predicted_docx_path):
-            raise RuntimeError(
-                f"LibreOffice failed for file `{filepath}`.\n"
-                f"Command: {' '.join(result.args)}\n"
-                f"Error: {result.stderr.decode()}"
+            # Convert .doc to .docx using LibreOffice
+            result = subprocess.run(
+                ['libreoffice', '--headless', '--convert-to', 'docx', temp_doc_path, '--outdir', temp_dir],
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
             )
 
-        # Extract text from the converted .docx file
-        doc = DocxDocument(predicted_docx_path)
-        text = "\n".join([paragraph.text for paragraph in doc.paragraphs])
-        print("Conversion and extraction successful!")
-        print("\n\nSUCESS!\n\n")
-        return text
+            # Check if conversion was successful
+            if result.returncode != 0 or not os.path.exists(predicted_docx_path):
+                raise RuntimeError(
+                    f"LibreOffice failed for file `{filepath}`.\n"
+                    f"Command: {' '.join(result.args)}\n"
+                    f"Error: {result.stderr.decode()}"
+                )
 
-    except Exception as e:
-        print(f"Error during processing of `{filepath}`: {e}")
-        raise
-    finally:
-        # Cleanup
-        if os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir, ignore_errors=True)
+            # Extract text from the converted .docx file
+            doc = DocxDocument(predicted_docx_path)
+            text = "\n".join([paragraph.text for paragraph in doc.paragraphs])
+            print("Conversion and extraction successful!")
+            return text
+
+        except Exception as e:
+            print(f"Error during attempt {attempts + 1} for `{filepath}`: {e}")
+            attempts += 1
+            if attempts > retry_limit:
+                raise RuntimeError(f"Failed to extract text from `{filepath}` after {retry_limit + 1} attempts.") from e
+        finally:
+            # Cleanup temporary files in the directory for each attempt
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 
