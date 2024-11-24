@@ -4,11 +4,13 @@ import asyncio
 import aiofiles
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from tqdm.asyncio import tqdm as async_tqdm  # For progress bars with asyncio
-from ..parser import hard_parse
+from ..parser import hard_parse, is_scanned_pdf
 from ..keyword import count_words
 import pandas as pd
 import logging
 import psutil  # For dynamic system load monitoring
+import json
+from datetime import datetime
 
 
 class EzManager:
@@ -19,6 +21,7 @@ class EzManager:
     - Parse text from various file types and cache it.
     - Generate bag-of-words representations and cache them.
     - Handle asynchronous processing with progress feedback.
+    - Perform global file processing tasks.
     - Maintain a structured cache for processed properties.
     """
     def __init__(self, watch_dir: str | Path, cache_dir: str | Path, max_threads=None, max_processes=None):
@@ -46,16 +49,8 @@ class EzManager:
 
     def calculate_limits(self, max_threads, max_processes):
         """Calculate reasonable limits for threads and processes."""
-        # Use defaults if not provided
         max_threads = max_threads or min(32, os.cpu_count() * 2)
         max_processes = max_processes or min(16, os.cpu_count())
-
-        # Optionally adjust based on system load
-        # load = psutil.cpu_percent()
-        # if load > 80:  # Example logic for high system load
-        #     max_threads = max(4, os.cpu_count())  # Reduce threads for IO
-        #     max_processes = max(2, os.cpu_count() // 2)  # Reduce processes for CPU
-
         return max_threads, max_processes
 
     def files(self, whitelist=None) -> list[Path]:
@@ -89,6 +84,19 @@ class EzManager:
                 await f.write(content)
         except Exception as e:
             self.logger.error(f"Failed to store property '{label}' for file {file}: {e}")
+            raise e
+
+    async def store_global(self, label: str, content: str | pd.DataFrame, mode: str = "w") -> None:
+        """Store a global property."""
+        try:
+            global_path = self.__global_dir / label
+            if isinstance(content, pd.DataFrame):
+                content.to_csv(global_path, index=False)
+            else:
+                async with aiofiles.open(global_path, mode) as f:
+                    await f.write(content)
+        except Exception as e:
+            self.logger.error(f"Failed to store global property '{label}': {e}")
             raise e
 
     async def gen_text(self, file: Path, executor: ProcessPoolExecutor = None, force: bool = False) -> str | None:
@@ -129,35 +137,77 @@ class EzManager:
         property_path = self.property_path(file, "bag_of_words.csv")
         return pd.read_csv(property_path)
 
-    def __getitem__(self, key: tuple[str | Path, str]) -> str | pd.DataFrame:
-        """Get a specific property for a file."""
-        file, property = key
-        match property:
-            case "text":
-                return asyncio.run(self.get_text(Path(file)))
-            case "bag_of_words":
-                return asyncio.run(self.get_bag_of_words(Path(file)))
-            case _:
-                raise KeyError(f"Unknown property: {property}")
+    async def gen_metadata(self, file: Path, parsing_success: bool, is_scanned: bool, error_message: str = None):
+        """Generate and store metadata about the file."""
+        meta_data = {
+            "file_name": file.name,
+            "file_path": str(file),
+            "parsing_success": parsing_success,
+            "is_scanned_pdf": is_scanned,
+            "error_message": error_message,
+            "processing_time": datetime.now().isoformat(),
+        }
+        try:
+            meta_path = self.property_path(file, "meta.json")
+            async with aiofiles.open(meta_path, "w") as meta_file:
+                await meta_file.write(json.dumps(meta_data, indent=4))
+        except Exception as e:
+            self.logger.error(f"Failed to write metadata for {file}: {e}")
+
+    async def process_file_1(self, file: Path, io_executor, cpu_executor: ProcessPoolExecutor):
+        """Process a single file by generating its text, bag-of-words, and metadata."""
+        error_message = None
+        parsing_success = False
+        is_scanned = False
+        try:
+            # Parse text content
+            content = await self.get_text(file, cpu_executor)
+            parsing_success = bool(content and not content.isspace())
+            is_scanned = is_scanned_pdf(file, content)
+
+            # Generate bag-of-words
+            await self.gen_bag_of_words(file, content, io_executor)
+
+        except Exception as e:
+            error_message = str(e)
+            self.logger.error(f"Error processing file {file}: {error_message}")
+
+        finally:
+            # Save metadata about the file
+            await self.gen_metadata(file, parsing_success, is_scanned, error_message)
+
+    async def global_processing(self):
+        """Perform global processing tasks."""
+        self.logger.info("Generating global bag-of-words...")
+        global_bow = pd.DataFrame(columns=["word", "count"])
+        error_files = []
+        
+        for file in self.files():
+            try:
+                bow_path = self.property_path(file, "bag_of_words.csv")
+                if not bow_path.exists():
+                    continue
+                bow = pd.read_csv(bow_path)
+                global_bow = pd.concat([global_bow, bow]).groupby("word", as_index=False).sum()
+            except Exception as e:
+                self.logger.error(f"Failed to process bag-of-words for {file}: {e}")
+                error_files.append({"file": str(file), "error": str(e)})
+
+        await self.store_global("global_bag_of_words.csv", global_bow)
+
+        self.logger.info("Generating global metadata...")
+        global_meta = {
+            "total_files": self.total_files,
+            "processed_files": self.total_files - len(error_files),
+            "failed_files": len(error_files),
+            "errors": error_files,
+            "processing_time": datetime.now().isoformat(),
+        }
+
+        await self.store_global("global_meta.json", json.dumps(global_meta, indent=4))
 
     async def preproc_all(self) -> None:
-        """
-        Preprocess all files in the watch directory concurrently.
-
-        Tasks:
-        - Parse text from each file and cache it.
-        - Generate a bag-of-words representation and cache it.
-        - Provide progress feedback using a TQDM progress bar.
-        """
-        async def process_file(file: Path, io_executor, cpu_executor: ProcessPoolExecutor):
-            """Process a single file by generating its text and bag-of-words."""
-            try:
-                # Parse text and generate bag-of-words
-                content = await self.get_text(file, cpu_executor)
-                await self.gen_bag_of_words(file, content, io_executor)
-            except Exception as e:
-                self.logger.error(f"Error processing file {file}: {e}")
-
+        """Preprocess all files and perform global processing."""
         files = self.files()
         self.total_files = len(files)
 
@@ -165,16 +215,15 @@ class EzManager:
             self.logger.info("No files to process.")
             return
 
-        # Log the number of files to be processed
         self.logger.info(f"Processing {self.total_files} files from {self.__watch_dir}.")
-        
-        # Log the worker limits
         self.logger.info(f"Using {self.max_threads} threads and {self.max_processes} processes.")
 
         with ThreadPoolExecutor(max_workers=self.max_threads) as io_executor, \
              ProcessPoolExecutor(max_workers=self.max_processes) as cpu_executor:
-            tasks = [process_file(file, io_executor, cpu_executor) for file in files]
+            tasks = [self.process_file_1(file, io_executor, cpu_executor) for file in files]
             await self._with_progress_bar(tasks, self.total_files)
+        
+        await self.global_processing()
 
     async def _with_progress_bar(self, tasks: list[asyncio.Task], total_files: int):
         """Wrap tasks with a progress bar for feedback."""
