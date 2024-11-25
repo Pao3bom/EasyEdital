@@ -47,7 +47,8 @@ class EzManager:
         cache_dir: str | Path, 
         max_threads=None, 
         max_processes=None, 
-        model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+        # model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+        model_name='ulysses-camara/legal-bert-pt-br',
     ) -> None:
         self.__watch_dir = Path(watch_dir)
         self.__cache_dir = Path(cache_dir)
@@ -466,6 +467,7 @@ class EzManager:
         
         return sorted(results, key=lambda x: max(x["file_path_score"], x["file_name_score"], x["content_score"]), reverse=True)
 
+
     async def search_using_embeddings(self, query: str, top_k: int = 5) -> list[dict]:
         """
         Perform semantic search using cached embeddings.
@@ -481,7 +483,7 @@ class EzManager:
         query_embedding = query_embedding.reshape(1, -1)  # Reshape for cosine similarity calculation
 
         matches = []
-
+        
         for file in self.files():
             try:
                 # Load cached embeddings

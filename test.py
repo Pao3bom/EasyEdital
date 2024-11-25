@@ -7,6 +7,7 @@ def main():
     print('\n\n')
     print('=' * 50)
     print("Running test.py")
+    
     watch_dir = "data"
     cache_dir = "cache"
     manager = EzManager(watch_dir, cache_dir)
@@ -15,7 +16,9 @@ def main():
     query = input("Enter a search query: ")
     results = asyncio.run(manager.search(query))
     
-    print(results)
+    print(*results)
+    
+    
     
 # # def main():
 #     import pypandoc

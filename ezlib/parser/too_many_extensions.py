@@ -56,8 +56,13 @@ def parse_pdf(file_path):
     return text
 
 
+
+
 def parse_docx(file_path):
     return "\n".join(p.text for p in DocxDocument(file_path).paragraphs)
+
+
+
 
 
 def parse_rtf(file_path):
@@ -72,6 +77,7 @@ def parse_rtf(file_path):
             rtf_content = file.read()
     
     return rtf_to_text(rtf_content)
+
 
 
 
