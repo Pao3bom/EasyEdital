@@ -1,4 +1,4 @@
-import { Box, Typography, Button, Dialog, DialogContent, DialogTitle, IconButton } from "@mui/material";
+import { Box, Typography, Button, Dialog, DialogContent, DialogTitle, IconButton, CircularProgress } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
 import SearchBar from "../components/SearchBar";
 import DropZone from "../components/DropZone";
@@ -7,6 +7,34 @@ import { useState } from "react";
 
 const Home: React.FC = () => {
   const [openOptions, setOpenOptions] = useState(false);
+  const [searchResults, setSearchResults] = useState<any[]>([]); // Store results
+  const [loading, setLoading] = useState(false); // Track loading state
+
+  const handleSearch = async (query: string) => {
+    console.log("Sending query to backend:", query);
+    setLoading(true);
+    try {
+      const response = await fetch("/api/search", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ query }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Error: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      console.log("Search results:", data.results);
+      setSearchResults(data.results); // Update results state
+    } catch (error) {
+      console.error("Failed to fetch search results:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <Box
@@ -47,7 +75,34 @@ const Home: React.FC = () => {
       </Typography>
       {/* Search Bar */}
       <Box sx={{ width: "100%", maxWidth: "800px" }}>
-        <SearchBar />
+        <SearchBar onSearch={handleSearch} />
+      </Box>
+       {/* Loading Indicator */}
+       {loading && <CircularProgress sx={{ marginTop: "16px" }} />}
+      {/* Display Results */}
+      <Box
+        sx={{
+          width: "100%",
+          maxWidth: "800px",
+          marginTop: "24px",
+        }}
+      >
+        {searchResults.length > 0 ? (
+          <Typography variant="h6" sx={{ color: "text.primary" }}>
+            Resultados:
+          </Typography>
+        ) : (
+          !loading && (
+            <Typography variant="body1" sx={{ color: "text.secondary" }}>
+              Sem resultados para exibir.
+            </Typography>
+          )
+        )}
+        <ul>
+          {searchResults.map((result, index) => (
+            <li key={index}>{result}</li>
+          ))}
+        </ul>
       </Box>
       {/* Advanced Options Button */}
       <Button
