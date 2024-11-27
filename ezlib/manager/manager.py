@@ -12,21 +12,40 @@ import psutil  # For dynamic system load monitoring
 import json
 from datetime import datetime
 import torch
+import re
 from transformers import AutoTokenizer, AutoModel
 from sentence_transformers import SentenceTransformer
 from fuzzywuzzy import fuzz, process
 import numpy as np
+from math import log
 from sklearn.metrics.pairwise import cosine_similarity
 
 
+def validate_word(word: str):
+    word = re.sub(r'[^\w0-9]+', '', word, flags=re.UNICODE)
+
+    if len(word) == 0 or word.isnumeric():
+        return False
+    else:
+        return True
+
 
 def preproc_global_bag(global_bag : pd.DataFrame) -> pd.DataFrame:
-    # return empty dataframe for now
-    return pd.DataFrame()
+    """Create the global keywords"""
+    global_keywords = global_bag[global_bag["frequency"] >= 3]
+    global_keywords = global_keywords[global_keywords.apply(validate_word)]
 
-def tfdf_stuff(indivual_bag : pd.DataFrame, global_bag : pd.DataFrame) -> pd.DataFrame:
-    # return empty dataframe for now
-    return pd.DataFrame()
+    return global_keywords
+
+def tfidf_stuff(indivual_bag : pd.DataFrame, global_bag : pd.DataFrame, corpus_size: int) -> pd.DataFrame:
+    """Calculates the TF-IDF of a single file"""
+    tfidf_df = indivual_bag.copy()
+    tfidf_df["frequency"] = tfidf_df["word"].map(global_bag.set_index("word")["frequency"])
+
+    tfidf_df["value"] = tfidf_df.apply(lambda row: row["count"] * log(corpus_size / row["frequency"]), axis=1)
+    tfidf_df.drop(columns=["count", "frequency"], inplace=True)
+
+    return tfidf_df
 
 
 
@@ -292,8 +311,8 @@ class EzManager:
     async def process_file_2(self, file: Path, material, io_executor, cpu_executor: ProcessPoolExecutor):
         """
         Perform the second wave of processing for an individual file.
-        - Applies the `tfdf_stuff` function using the global bag-of-words.
-        - Saves the individual TFDF file.
+        - Applies the `tfidf_stuff` function using the global bag-of-words.
+        - Saves the individual TF-IDF file.
         
         Args:
             file (Path): The path to the file to process.
@@ -316,13 +335,13 @@ class EzManager:
                 self.logger.error("Global bag-of-words is missing. Skipping.")
                 return
 
-            # Apply the `tfdf_stuff` function
-            tfdf_result = await asyncio.to_thread(tfdf_stuff, indiv_bag, global_bag)
+            # Apply the `tfidf_stuff` function
+            tfidf_result = await asyncio.to_thread(tfidf_stuff, indiv_bag, global_bag)
 
-            # Save the resulting TFDF data
-            tfdf_path = self.property_path(file, "tfdf.csv")
-            await asyncio.to_thread(tfdf_result.to_csv, tfdf_path, index=False)
-            self.logger.info(f"TFDF saved for {file} at {tfdf_path}.")
+            # Save the resulting TF-IDF data
+            tfidf_path = self.property_path(file, "tf-idf.csv")
+            await asyncio.to_thread(tfidf_result.to_csv, tfidf_path, index=False)
+            self.logger.info(f"TF-IDF saved for {file} at {tfidf_path}.")
 
         except Exception as e:
             self.logger.error(f"Error in second wave processing for {file}: {e}")
@@ -333,7 +352,7 @@ class EzManager:
         Generate a global bag-of-words by combining individual bag-of-words.
         """
         self.logger.info("Generating global bag-of-words...")
-        global_bow = pd.DataFrame(columns=["word", "count"])
+        global_bow = pd.DataFrame(columns=["word", "count", "frequency"])
         error_files = []
 
         for file in self.files():
@@ -342,6 +361,7 @@ class EzManager:
                 if not bow_path.exists():
                     continue
                 bow = pd.read_csv(bow_path)
+                bow["frequency"] = 1
                 global_bow = pd.concat([global_bow, bow]).groupby("word", as_index=False).sum()
             except Exception as e:
                 self.logger.error(f"Failed to process bag-of-words for {file}: {e}")
@@ -388,8 +408,8 @@ class EzManager:
         
         # td-df on global bag
         global_bag = await self.load_global("global_bag_of_words.csv")
-        global_tfdf = await asyncio.to_thread(preproc_global_bag, global_bag)
-        await self.store_global("global_tfdf.csv", global_tfdf)
+        global_tfidf = await asyncio.to_thread(preproc_global_bag, global_bag)
+        await self.store_global("global_tfidf.csv", global_tfidf)
         
 
     async def preproc_all(self) -> None:
