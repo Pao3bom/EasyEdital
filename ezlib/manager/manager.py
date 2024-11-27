@@ -21,7 +21,8 @@ from math import log
 from sklearn.metrics.pairwise import cosine_similarity
 
 
-def validate_word(word: str):
+def validate_word(word: any):
+    # print(word)
     word = re.sub(r'[^\w0-9]+', '', word, flags=re.UNICODE)
 
     if len(word) == 0 or word.isnumeric():
@@ -29,11 +30,10 @@ def validate_word(word: str):
     else:
         return True
 
-
 def preproc_global_bag(global_bag : pd.DataFrame) -> pd.DataFrame:
     """Create the global keywords"""
     global_keywords = global_bag[global_bag["frequency"] >= 3]
-    global_keywords = global_keywords[global_keywords.apply(validate_word)]
+    global_keywords = global_keywords[global_keywords['word'].apply(validate_word)]
 
     return global_keywords
 
@@ -41,12 +41,26 @@ def tfidf_stuff(indivual_bag : pd.DataFrame, global_bag : pd.DataFrame, corpus_s
     """Calculates the TF-IDF of a single file"""
     tfidf_df = indivual_bag.copy()
     tfidf_df["frequency"] = tfidf_df["word"].map(global_bag.set_index("word")["frequency"])
-
+    # print('===== corupus size:', corpus_size)
+    print('>>>>>>>>>>>>>>>>>>>> tfidf_df:')
+    # print(tfidf_df)
+    
+    # print('----------------- aaaaaa')
     tfidf_df["value"] = tfidf_df.apply(lambda row: row["count"] * log(corpus_size / row["frequency"]), axis=1)
     tfidf_df.drop(columns=["count", "frequency"], inplace=True)
 
     return tfidf_df
 
+def log_exception(logger, message, exception):
+    logger.error(f"{message}: {exception}", exc_info=True)
+
+# Gets the value of a file using the TF-IDF
+def tfdf_search_value(query: list[str], local_tfidf : pd.DataFrame) -> float:    
+    # Fetch the TF-IDF values for the query words
+    query_values = local_tfidf[local_tfidf["word"].isin(query)]["value"]
+    
+    # Calculate the sum of the TF-IDF values
+    return query_values.sum().item()
 
 
 class EzManager:
@@ -84,8 +98,13 @@ class EzManager:
         # Configure logging
         logging.basicConfig(
             level=logging.INFO,
-            format="%(asctime)s [%(levelname)s] %(message)s"
+            format="%(asctime)s [%(levelname)s] %(message)s",
+            handlers=[
+                logging.StreamHandler(),  # Logs to console
+                logging.FileHandler("ezmanager.log", mode="a")  # Logs to a file
+            ]
         )
+        
         self.logger = logging.getLogger("EzManager")
 
         # Set worker limits
@@ -110,16 +129,20 @@ class EzManager:
             if path.is_file() and path.suffix.lower() in (ext.lower() for ext in whitelist)
         ]
 
-    async def load_global(self, property_name: str) -> str | pd.DataFrame:
+    async def load_global(self, property_name: str) -> str | pd.DataFrame | dict:
         """Load a global property from the cache."""
         try:
             global_path = self.__global_dir / property_name
             if "csv" in property_name:
                 return pd.read_csv(global_path)
+            if '.json' in property_name:
+                async with aiofiles.open(global_path, "r") as f:
+                    return json.loads(await f.read()) 
             async with aiofiles.open(global_path, "r") as f:
                 return await f.read()
         except Exception as e:
-            self.logger.error(f"Failed to load global property '{property_name}': {e}")
+            # self.logger.error(f"Failed to load global property '{property_name}': {e}")
+            log_exception(self.logger, f"Failed to load global property '{property_name}'", e)
             raise e
         
 
@@ -143,7 +166,8 @@ class EzManager:
             async with aiofiles.open(self.property_path(file, label), mode) as f:
                 await f.write(content)
         except Exception as e:
-            self.logger.error(f"Failed to store property '{label}' for file {file}: {e}")
+            # self.logger.error(f"Failed to store property '{label}' for file {file}: {e}")
+            log_exception(self.logger, f"Failed to store property '{label}' for file {file}", e)
             raise e
 
     async def store_global(self, label: str, content: str | pd.DataFrame, mode: str = "w") -> None:
@@ -156,7 +180,8 @@ class EzManager:
                 async with aiofiles.open(global_path, mode) as f:
                     await f.write(content)
         except Exception as e:
-            self.logger.error(f"Failed to store global property '{label}': {e}")
+            # self.logger.error(f"Failed to store global property '{label}': {e}")
+            log_exception(self.logger, f"Failed to store global property '{label}'", e)
             raise e
 
     async def gen_text(self, file: Path, executor: ProcessPoolExecutor = None, force: bool = False) -> str | None:
@@ -212,8 +237,8 @@ class EzManager:
             async with aiofiles.open(meta_path, "w") as meta_file:
                 await meta_file.write(json.dumps(meta_data, indent=4))
         except Exception as e:
-            self.logger.error(f"Failed to write metadata for {file}: {e}")
-    
+            # self.logger.error(f"Failed to write metadata for {file}: {e}")
+            log_exception(self.logger, f"Failed to write metadata for {file}", e)
     
     
     
@@ -237,7 +262,8 @@ class EzManager:
             async with aiofiles.open(property_path, "w") as f:
                 await f.write(json.dumps(embeddings))
         except Exception as e:
-            self.logger.error(f"Failed to generate embeddings for {file}: {e}")
+            # self.logger.error(f"Failed to generate embeddings for {file}: {e}")
+            log_exception(self.logger, f"Failed to generate embeddings for {file}", e)
             raise e
 
     async def gen_global_embeddings(self) -> list[dict]:
@@ -265,7 +291,8 @@ class EzManager:
                     global_embeddings[file.name] = json.loads(embeddings)
             except Exception as e:
                 error_msg = f"Failed to read embeddings for {file}: {e}"
-                self.logger.error(error_msg)
+                # self.logger.error(error_msg)
+                log_exception(self.logger, f"Failed to read embeddings for {file}", e)
                 error_files.append({"file": str(file), "error": error_msg})
 
         # Save aggregated global embeddings
@@ -275,7 +302,8 @@ class EzManager:
                 await f.write(json.dumps(global_embeddings, indent=4))
             self.logger.info(f"Global embeddings saved to {global_path}.")
         except Exception as e:
-            self.logger.error(f"Failed to save global embeddings: {e}")
+            # self.logger.error(f"Failed to save global embeddings: {e}")
+            log_exception(self.logger, "Failed to save global embeddings", e)
             raise e
 
         return error_files
@@ -300,8 +328,9 @@ class EzManager:
                 await self.gen_embeddings(file, content)
 
         except Exception as e:
-            error_message = str(e)
-            self.logger.error(f"Error processing file {file}: {error_message}")
+            # error_message = str(e)
+            # self.logger.error(f"Error processing file {file}: {error_message}")
+            log_exception(self.logger, f"Failed to process file {file}", e)
 
         finally:
             # Save metadata about the file
@@ -332,11 +361,13 @@ class EzManager:
             # Retrieve global bag-of-words from material
             global_bag = material.get('global_bag')
             if global_bag is None:
-                self.logger.error("Global bag-of-words is missing. Skipping.")
+                # self.logger.error("Global bag-of-words is missing. Skipping.")
+                log_exception(self.logger, "Global bag-of-words is missing", None)
                 return
 
             # Apply the `tfidf_stuff` function
-            tfidf_result = await asyncio.to_thread(tfidf_stuff, indiv_bag, global_bag)
+            corpus_size = material.get('global_meta', {}).get('processed_files', 0)
+            tfidf_result = await asyncio.to_thread(tfidf_stuff, indiv_bag, global_bag, corpus_size)
 
             # Save the resulting TF-IDF data
             tfidf_path = self.property_path(file, "tf-idf.csv")
@@ -344,9 +375,10 @@ class EzManager:
             self.logger.info(f"TF-IDF saved for {file} at {tfidf_path}.")
 
         except Exception as e:
-            self.logger.error(f"Error in second wave processing for {file}: {e}")
+            # self.logger.error(f"Error in second wave processing for {file}: {e}")
+            log_exception(self.logger, f"Failed to process file {file}", e)
 
-
+    
     async def gen_global_bag_of_words(self):
         """
         Generate a global bag-of-words by combining individual bag-of-words.
@@ -364,8 +396,8 @@ class EzManager:
                 bow["frequency"] = 1
                 global_bow = pd.concat([global_bow, bow]).groupby("word", as_index=False).sum()
             except Exception as e:
-                self.logger.error(f"Failed to process bag-of-words for {file}: {e}")
                 error_files.append({"file": str(file), "error": str(e)})
+                log_exception(self.logger, f"Failed to process bag-of-words for {file}", e)
 
         # Save global bag-of-words
         await self.store_global("global_bag_of_words.csv", global_bow)
@@ -436,6 +468,7 @@ class EzManager:
         # Second wave of individual file processing
         material = {
             'global_bag': await self.load_global("global_bag_of_words.csv"),
+            'global_meta': await self.load_global("global_meta.json"),
         }
 
         with ThreadPoolExecutor(max_workers=self.max_threads) as io_executor, \
@@ -450,7 +483,7 @@ class EzManager:
         await async_tqdm.gather(*tasks, desc="Processing Files", total=total_files, unit="files")
 
 
-    async def fuzzy_search_text(self, query: str, threshold: int = 80) -> list[dict]:
+    async def fuzzy_search_text(self, query: str, threshold : int | None = None) -> list[dict]:
         """
         Perform fuzzy search on cached text transcripts, matching by path, file name, or file contents.
         
@@ -472,20 +505,65 @@ class EzManager:
                 content_score = fuzz.partial_ratio(query, text)
 
                 # Aggregate scores
-                if max(file_name_score, file_path_score, content_score) >= threshold:
+                if threshold is not None and max(file_name_score, file_path_score, content_score) >= threshold:
                     results.append({
                         "file_path": str(file),
                         "file_name": file.name,
                         "file_path_score": file_path_score,
                         "file_name_score": file_name_score,
                         "content_score": content_score,
+                        "max_score": max(file_path_score, file_name_score, content_score),
+                        "mean_score": (file_path_score + file_name_score + content_score) / 3,
                     })
                 
-                
             except Exception as e:
-                self.logger.error(f"Failed to search file {file}: {e}")
+                log_exception(self.logger, f"Failed to search file {file}", e)
         
         return sorted(results, key=lambda x: max(x["file_path_score"], x["file_name_score"], x["content_score"]), reverse=True)
+
+
+    async def search_using_tfidf(self, query: str, top_k: int = 5) -> list[dict]:
+        """
+        Perform search using TF-IDF values.
+        
+        Args:
+            query (str): The search query.
+            top_k (int): Number of top results to return.
+
+        Returns:
+            list[dict]: A list of matches with their file paths, names, and scores.
+        """
+
+        # Load global TF-IDF data
+        global_tfidf = await self.load_global("global_tfidf.csv")
+
+        # Preprocess the query
+        query = query.lower().split()
+        query = [word for word in query if word in global_tfidf["word"].values]
+
+        # Calculate search values
+        results = []
+        for file in self.files():
+            try:
+                # load individual TF-IDF data
+                tfidf_path = self.property_path(file, "tf-idf.csv")
+                
+                if not tfidf_path.exists():
+                    self.logger.warning(f"TF-IDF data not found for {file}. Skipping.")
+                    continue
+                
+                tfidf = pd.read_csv(tfidf_path)
+            
+                score = tfdf_search_value(query, tfidf)
+                results.append({
+                    "file_path": str(file),
+                    "file_name": file.name,
+                    "search_value": score,
+                })
+            except Exception as e:
+                log_exception(self.logger, f"Failed to search file {file}", e)
+
+        return sorted(results, key=lambda x: x["search_value"], reverse=True)[:top_k]
 
 
     async def search_using_embeddings(self, query: str, top_k: int = 5) -> list[dict]:
@@ -523,33 +601,39 @@ class EzManager:
                     "similarity_score": similarity_score,
                 })
             except Exception as e:
-                self.logger.error(f"Failed to perform embedding search for {file}: {e}")
+                log_exception(self.logger, f"Failed to perform embedding search for {file}", e)
 
         return sorted(matches, key=lambda x: x["similarity_score"], reverse=True)[:top_k]
 
-
+    
     async def search(
         self,
         query: str,
         threshold: int = 80,
         top_k: int = 5,
         use_fuzzy: bool = True,
-        use_embeddings: bool = True
-    ) -> list[dict]:
+        use_embeddings: bool = True,
+        use_tfidf: bool = True,
+        combine_results: bool = True
+    ) -> dict:
         """
-        Perform a combined search using both fuzzy matching and embeddings.
+        Perform a combined search using fuzzy matching, embeddings, and TF-IDF.
 
         Args:
             query (str): The search query.
             threshold (int): Minimum similarity score for fuzzy search results.
-            top_k (int): Number of top results to return from embeddings.
+            top_k (int): Number of top results to return from each method.
             use_fuzzy (bool): Whether to include fuzzy search in the results.
             use_embeddings (bool): Whether to include embedding-based search in the results.
+            use_tfidf (bool): Whether to include TF-IDF search in the results.
+            combine_results (bool): Whether to combine the results from different methods.
 
         Returns:
-            list[dict]: A list of combined search results, ranked by relevance.
+            dict: A dictionary containing results from each method and combined results if applicable.
         """
-        results = []
+        results = {}
+        combined_results = []
+        methods = []
 
         if use_fuzzy:
             self.logger.info("Performing fuzzy search...")
@@ -557,7 +641,8 @@ class EzManager:
             for res in fuzzy_results:
                 res["type"] = "fuzzy"
                 res["relevance"] = max(res["file_path_score"], res["file_name_score"], res["content_score"])
-                results.append(res)
+            results["fuzzy"] = fuzzy_results[:top_k]
+            methods.append("fuzzy")
 
         if use_embeddings:
             self.logger.info("Performing semantic search using embeddings...")
@@ -565,14 +650,44 @@ class EzManager:
             for res in embed_results:
                 res["type"] = "embedding"
                 res["relevance"] = res["similarity_score"]
-                results.append(res)
+            results["embedding"] = embed_results
+            methods.append("embedding")
 
-        # Combine, deduplicate, and rank results by relevance
-        seen_paths = set()
-        combined_results = []
-        for res in sorted(results, key=lambda x: x["relevance"], reverse=True):
-            if res["file_path"] not in seen_paths:
+        if use_tfidf:
+            self.logger.info("Performing TF-IDF search...")
+            tfidf_results = await self.search_using_tfidf(query, top_k=top_k)
+            for res in tfidf_results:
+                res["type"] = "tfidf"
+                res["relevance"] = res["search_value"]
+            results["tfidf"] = tfidf_results
+            methods.append("tfidf")
+
+        if combine_results:
+            # Combine results from different methods
+            combined = {}
+            for method in methods:
+                for res in results[method]:
+                    key = res["file_path"]
+                    if key not in combined:
+                        combined[key] = {
+                            "file_path": res["file_path"],
+                            "file_name": res["file_name"],
+                            "types": [method],
+                            "relevance_scores": {method: res["relevance"]}
+                        }
+                    else:
+                        combined[key]["types"].append(method)
+                        combined[key]["relevance_scores"][method] = res["relevance"]
+
+            # Calculate combined relevance (e.g., average of relevance scores)
+            for res in combined.values():
+                # You can adjust the weighting here if needed
+                res["relevance"] = sum(res["relevance_scores"].values()) / len(res["relevance_scores"])
                 combined_results.append(res)
-                seen_paths.add(res["file_path"])
 
-        return combined_results
+            # Sort combined results
+            combined_results = sorted(combined_results, key=lambda x: x["relevance"], reverse=True)[:top_k]
+            results["combined"] = combined_results
+
+        return results
+
