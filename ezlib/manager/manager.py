@@ -476,7 +476,10 @@ class EzManager:
             tasks = [self.process_file_2(file, material, io_executor, cpu_executor) for file in files]
             await self._with_progress_bar(tasks, self.total_files)
 
-                
+    # sync version of preproc_all
+    def preproc_all_sync(self) -> None:
+        """Synchronous wrapper for preproc_all."""
+        asyncio.run(self.preproc_all())
 
     async def _with_progress_bar(self, tasks: list[asyncio.Task], total_files: int):
         """Wrap tasks with a progress bar for feedback."""

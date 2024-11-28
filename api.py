@@ -1,17 +1,32 @@
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
-import asyncio
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import Optional
 from ezlib import EzManager
 
+
 app = FastAPI(title="EzManager API", version="1.0.0")
+
 
 # Initialize EzManager
 WATCH_DIR = "data"
 CACHE_DIR = "cache"
 manager = EzManager(WATCH_DIR, CACHE_DIR)
+
+# await manager.preproc_all()
+manager.preproc_all_sync()
+
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],  # Match frontend's origin
+    allow_credentials=True,
+    allow_methods=["*"],  # Allow all HTTP methods
+    allow_headers=["*"],  # Allow all headers
+)
 
 
 # Preprocess Files
@@ -52,9 +67,9 @@ async def search_files(search_query: SearchQuery):
             use_tfidf=search_query.use_tfidf,
             combine_results=search_query.combine_results,
         )
-        return JSONResponse(content=results)
+        return JSONResponse(content={"results": results})
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Search error: {str(e)}")
 
 
 # Similar Files Input Model
@@ -77,7 +92,7 @@ async def search_similar_files(query: SimilarFileQuery):
         results = await manager.search_similar_files(file_path, top_k=query.top_k)
         return {"status": "success", "results": results}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Error finding similar files: {str(e)}")
 
 
 # API Status
@@ -95,7 +110,7 @@ async def list_files():
         files = [str(file) for file in manager.files()]
         return {"status": "success", "files": files}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Error listing files: {str(e)}")
 
 
 # Run the API
