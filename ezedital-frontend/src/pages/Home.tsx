@@ -7,6 +7,7 @@ import {
   DialogTitle,
   IconButton,
   CircularProgress,
+  Link,
 } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
 import SearchBar from "../components/SearchBar";
@@ -18,6 +19,8 @@ const Home: React.FC = () => {
   const [openOptions, setOpenOptions] = useState(false);
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const [openIframe, setOpenIframe] = useState(false);
+  const [iframeSrc, setIframeSrc] = useState("");
 
   const handleSearch = async (query: string) => {
     setLoading(true);
@@ -51,7 +54,14 @@ const Home: React.FC = () => {
     }
   };
 
-  useEffect(() => {console.log(searchResults)}, [searchResults]);
+  const handleOpenIframe = (filePath: string) => {
+    setIframeSrc(`http://localhost:8000/view-pdf/${encodeURIComponent(filePath)}`);
+    setOpenIframe(true);
+  };
+
+  useEffect(() => {
+    console.log(searchResults);
+  }, [searchResults]);
 
   return (
     <Box
@@ -67,23 +77,12 @@ const Home: React.FC = () => {
         padding: "16px",
       }}
     >
-      <Typography
-        variant="h3"
-        sx={{
-          fontWeight: "bold",
-          color: "primary.main",
-          textAlign: "center",
-        }}
-      >
+      <Typography variant="h3" sx={{ fontWeight: "bold", color: "primary.main", textAlign: "center" }}>
         Ezedital: Pesquisa Jurídica com IA
       </Typography>
       <Typography
         variant="h6"
-        sx={{
-          maxWidth: "600px",
-          color: "text.secondary",
-          textAlign: "center",
-        }}
+        sx={{ maxWidth: "600px", color: "text.secondary", textAlign: "center" }}
       >
         Descubra insights jurídicos, documentos e dicas de forma eficiente com o
         poder da IA.
@@ -113,26 +112,67 @@ const Home: React.FC = () => {
         ) : (
           !loading && (
             <Typography variant="body1" sx={{ color: "text.secondary" }}>
-              {/* Sem resultados para exibir. */}
+              Sem resultados para exibir.
             </Typography>
           )
         )}
         <ol>
           {searchResults.map((result, index) => (
-            <li key={index}>{result.file_path}</li>
+            <li key={index}>
+              <Link
+                href="#"
+                onClick={() => handleOpenIframe(result.file_path)}
+                sx={{ cursor: "pointer", textDecoration: "none", color: "primary.main" }}
+              >
+                {result.file_name}
+              </Link>
+            </li>
           ))}
         </ol>
       </Box>
-      <Box
-        sx={{
-          width: "100%",
-          maxWidth: "800px",
-          height: "250px",
-          marginTop: "24px",
-        }}
-      >
+      <Box sx={{ width: "100%", maxWidth: "800px", height: "250px", marginTop: "24px" }}>
         <DropZone />
       </Box>
+      <Dialog
+        open={openIframe}
+        onClose={() => setOpenIframe(false)}
+        maxWidth="lg"
+        fullWidth
+        PaperProps={{
+          sx: {
+            backgroundColor: "background.default",
+            color: "text.primary",
+            borderRadius: "12px",
+            border: "1px solid",
+            borderColor: "primary.main",
+            boxShadow: "0 8px 24px rgba(0, 0, 0, 0.8)",
+          },
+        }}
+      >
+        <DialogTitle
+          sx={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            color: "text.primary",
+          }}
+        >
+          <Typography variant="h6" sx={{ fontWeight: "bold" }}>
+            Visualizador de PDF
+          </Typography>
+          <IconButton onClick={() => setOpenIframe(false)} sx={{ color: "primary.main" }}>
+            <CloseIcon />
+          </IconButton>
+        </DialogTitle>
+        <DialogContent>
+          <iframe
+            src={iframeSrc}
+            width="100%"
+            height="500px"
+            style={{ border: "none" }}
+          ></iframe>
+        </DialogContent>
+      </Dialog>
       <Dialog
         open={openOptions}
         onClose={() => setOpenOptions(false)}

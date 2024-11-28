@@ -113,6 +113,24 @@ async def list_files():
         raise HTTPException(status_code=500, detail=f"Error listing files: {str(e)}")
 
 
+from fastapi.responses import FileResponse
+
+@app.get("/view-pdf/{file_path}")
+async def view_pdf(file_path: str):
+    """
+    Serve PDF files for viewing in the browser.
+    """
+    file_path = Path(WATCH_DIR).parent / file_path
+    manager.logger.info(f"Viewing PDF file: {file_path}")
+    
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=404, detail="PDF file not found.")
+    if file_path.suffix.lower() != ".pdf":
+        raise HTTPException(status_code=400, detail="Requested file is not a PDF.")
+    return FileResponse(file_path, media_type="application/pdf")
+
+
+
 # Run the API
 if __name__ == "__main__":
     import uvicorn
