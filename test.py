@@ -1,150 +1,74 @@
 from ezlib import EzManager
 import asyncio
+from pathlib import Path
 
+def print_results(title, results):
+    """Helper function to display search results neatly."""
+    print("\n" + "=" * 50)
+    print(title)
+    if results:
+        for res in results:
+            print(f"File: {res['file_name']}")
+            print(f"Path: {res['file_path']}")
+            if "relevance" in res:
+                print(f"Relevance: {res['relevance']:.4f}")
+            if "similarity_score" in res:
+                print(f"Similarity Score: {res['similarity_score']:.4f}")
+            if "search_value" in res:
+                print(f"TF-IDF Score: {res['search_value']:.4f}")
+            if "file_name_score" in res:
+                print(f"File Name Score: {res['file_name_score']}")
+            if "file_path_score" in res:
+                print(f"File Path Score: {res['file_path_score']}")
+            if "content_score" in res:
+                print(f"Content Score: {res['content_score']}")
+            if "types" in res:
+                print(f"Matched Methods: {', '.join(res['types'])}")
+            print("-" * 50)
+    else:
+        print("No results found.")
+    print("=" * 50)
 
+async def run_demo():
+    """Run the EzManager demo."""
+    print('\n' + '=' * 50)
+    print("Running EzManager Demonstration")
 
-def main():
-    print('\n\n')
-    print('=' * 50)
-    print("Running test.py")
-    
+    # Initialize the EzManager with sample directories
     watch_dir = "data"
     cache_dir = "cache"
     manager = EzManager(watch_dir, cache_dir)
-    manager.preprocess()
-    
-    query = input("Enter a search query: ")
-    results = asyncio.run(manager.search(query))
-    
-    print(*results)
-    
-    
-    
-# # def main():
-#     import pypandoc
-#     result = pypandoc.convert_file("test.rtf", "plain")
-#     print(result)
 
-    
-    
-# if __name__ == "__main__":
-# #     main()
+    # Preprocess the files
+    print("Preprocessing files...")
+    await manager.preproc_all()
+    print("Preprocessing complete.")
 
+    # Ask if results should be combined
+    combine_results = input("\nDo you want to combine the results from all methods? (yes/no): ").strip().lower() == "yes"
 
-# from striprtf.striprtf import rtf_to_text
+    # Perform a search using all methods
+    query = input("\nEnter a search query: ")
+    search_results = await manager.search(query, use_fuzzy=True, use_embeddings=True, use_tfidf=True, combine_results=combine_results)
 
-# def main():
-#     # Load the RTF file
-#     with open("test.rtf", "r", encoding="utf-8") as file:
-#         rtf_content = file.read()
+    # Display results
+    if combine_results:
+        print_results("Combined Search Results", search_results.get("combined", []))
+    else:
+        print_results("Fuzzy Search Results", search_results.get("fuzzy", []))
+        print_results("Embedding Search Results", search_results.get("embedding", []))
+        print_results("TF-IDF Search Results", search_results.get("tfidf", []))
 
-#     # Extract text
-#     plain_text = rtf_to_text(rtf_content)
+    # Perform a similar files search
+    new_file_path = input("\nEnter the path to a new file to find similar files: ").strip()
+    if Path(new_file_path).is_file():
+        similar_files = await manager.search_similar_files(Path(new_file_path))
+        print_results("Similar Files Results", similar_files)
+    else:
+        print(f"The file {new_file_path} does not exist or is invalid.")
 
-#     print(plain_text)
-
-# import os
-# import subprocess
-# from tempfile import NamedTemporaryFile
-# from docx import Document as DocxDocument
-
-
-# def extract_text_from_doc(filepath):
-#     with NamedTemporaryFile(suffix="__TEMP__.docx", delete=False) as temp_file:
-#         temp_docx_path = temp_file.name
-
-#     try:
-#         # Convert '.doc' to '.docx'
-#         result = subprocess.run(
-#             ['unoconv', '-f', 'docx', '-o', temp_docx_path, filepath],
-#             check=True,
-#             stdout=subprocess.PIPE,
-#             stderr=subprocess.PIPE,
-#         )
-#         if result.returncode != 0:
-#             raise RuntimeError(f"Unoconv failed: {result.stderr.decode()}")
-
-#         # Extract text from the temporary .docx file
-#         doc = DocxDocument(temp_docx_path)
-#         text = "\n".join([paragraph.text for paragraph in doc.paragraphs])
-#     except Exception as e:
-#         raise RuntimeError(f"Failed to extract text from .doc file: {e}")
-#     finally:
-#         # Cleanup
-#         if os.path.exists(temp_docx_path):
-#             os.remove(temp_docx_path)
-
-#     return text
-
-
-# def main():
-#     print(extract_text_from_doc('test.doc'))
-
-# import os
-# import shutil
-# import hashlib
-# import subprocess
-# from docx import Document as DocxDocument
-
-# def extract_text_from_doc(filepath, retry_limit=5):
-#     # Convert PosixPath to string if necessary
-#     filepath = str(filepath)
-
-#     # Ensure the file exists
-#     if not os.path.exists(filepath):
-#         raise FileNotFoundError(f"File not found: {filepath}")
-    
-#     # Hash the file path to avoid conflicts
-#     hash = hashlib.md5(filepath.encode()).hexdigest()
-#     temp_dir = os.path.join(os.path.dirname(filepath), f"_TEMP_{hash}")
-#     os.makedirs(temp_dir, exist_ok=True)
-
-#     temp_doc_path = os.path.join(temp_dir, os.path.basename(filepath))
-#     predicted_docx_path = os.path.splitext(temp_doc_path)[0] + ".docx"
-
-#     attempts = 0
-
-#     while attempts <= retry_limit:
-#         try:
-#             # Copy the original file to the temporary directory
-#             shutil.copy(filepath, temp_doc_path)
-#             print(f"Attempt {attempts + 1}: Converting {temp_doc_path}")
-
-#             # Convert .doc to .docx using LibreOffice
-#             result = subprocess.run(
-#                 ['libreoffice', '--headless', '--convert-to', 'docx', temp_doc_path, '--outdir', temp_dir],
-#                 check=False,
-#                 stdout=subprocess.PIPE,
-#                 stderr=subprocess.PIPE,
-#             )
-
-#             # Check if conversion was successful
-#             if result.returncode != 0 or not os.path.exists(predicted_docx_path):
-#                 raise RuntimeError(
-#                     f"LibreOffice failed for file `{filepath}`.\n"
-#                     f"Command: {' '.join(result.args)}\n"
-#                     f"Error: {result.stderr.decode()}"
-#                 )
-
-#             # Extract text from the converted .docx file
-#             doc = DocxDocument(predicted_docx_path)
-#             text = "\n".join([paragraph.text for paragraph in doc.paragraphs])
-#             print("Conversion and extraction successful!")
-#             return text
-
-#         except Exception as e:
-#             print(f"Error during attempt {attempts + 1} for `{filepath}`: {e}")
-#             attempts += 1
-#             if attempts > retry_limit:
-#                 raise RuntimeError(f"Failed to extract text from `{filepath}` after {retry_limit + 1} attempts.") from e
-#         finally:
-#             # Cleanup temporary files in the directory for each attempt
-#             if os.path.exists(temp_dir):
-#                 shutil.rmtree(temp_dir, ignore_errors=True)
-                
-                
-# def main():
-#     print(extract_text_from_doc('LMM - 2023. SECULT.  MINUTA EDITAIS. LEI PAULO GUSTAVO.doc'))
+def main():
+    asyncio.run(run_demo())
 
 if __name__ == "__main__":
     main()
