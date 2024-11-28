@@ -77,6 +77,20 @@ const Home: React.FC = () => {
       <Box sx={{ width: "100%", maxWidth: "800px" }}>
         <SearchBar onSearch={handleSearch} />
       </Box>
+      {/* Advanced Options Button */}
+      <Button
+        variant="outlined"
+        size="small"
+        sx={{
+          color: "primary.main",
+          borderColor: "primary.main",
+          marginTop: "16px",
+          "&:hover": { borderColor: "primary.light" },
+        }}
+        onClick={() => setOpenOptions(true)}
+      >
+        Mostrar Opções Avançadas
+      </Button>
        {/* Loading Indicator */}
        {loading && <CircularProgress sx={{ marginTop: "16px" }} />}
       {/* Display Results */}
@@ -104,20 +118,6 @@ const Home: React.FC = () => {
           ))}
         </ul>
       </Box>
-      {/* Advanced Options Button */}
-      <Button
-        variant="outlined"
-        size="small"
-        sx={{
-          color: "primary.main",
-          borderColor: "primary.main",
-          marginTop: "16px",
-          "&:hover": { borderColor: "primary.light" },
-        }}
-        onClick={() => setOpenOptions(true)}
-      >
-        Mostrar Opções Avançadas
-      </Button>
       {/* DropZone */}
       <Box
         sx={{
