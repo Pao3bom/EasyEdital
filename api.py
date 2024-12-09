@@ -90,7 +90,9 @@ async def search_similar_files(query: SimilarFileQuery):
 
     try:
         results = await manager.search_similar_files(file_path, top_k=query.top_k)
-        return {"status": "success", "results": results}
+
+        return JSONResponse(content={"results": results})
+        # return {"status": "success", "results": results}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error finding similar files: {str(e)}")
 

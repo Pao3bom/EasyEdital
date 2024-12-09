@@ -54,6 +54,42 @@ const Home: React.FC = () => {
     }
   };
 
+  const handleSimSearch = async (query: string) => {
+    setLoading(true);
+    try {
+      const response = await fetch("http://localhost:8000/search-similar", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          file_path: query,
+          // query,
+          // threshold: 80,
+          top_k: 5,
+          // use_fuzzy: true,
+          // use_embeddings: true,
+          // use_tfidf: true,
+          // combine_results: true,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Error: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+
+      console.log(data)
+
+      setSearchResults(data.results || []);
+    } catch (error) {
+      console.error("Failed to fetch search results:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleOpenIframe = (filePath: string) => {
     setIframeSrc(`http://localhost:8000/view-pdf/${encodeURIComponent(filePath)}`);
     setOpenIframe(true);
@@ -131,7 +167,7 @@ const Home: React.FC = () => {
         </ol>
       </Box>
       <Box sx={{ width: "100%", maxWidth: "800px", height: "250px", marginTop: "24px" }}>
-        <DropZone />
+        <DropZone onDropped={handleSimSearch} />
       </Box>
       <Dialog
         open={openIframe}

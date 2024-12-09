@@ -42,7 +42,7 @@ def tfidf_stuff(indivual_bag : pd.DataFrame, global_bag : pd.DataFrame, corpus_s
     tfidf_df = indivual_bag.copy()
     tfidf_df["frequency"] = tfidf_df["word"].map(global_bag.set_index("word")["frequency"])
     # print('===== corupus size:', corpus_size)
-    print('>>>>>>>>>>>>>>>>>>>> tfidf_df:')
+    # print('>>>>>>>>>>>>>>>>>>>> tfidf_df:')
     # print(tfidf_df)
     
     # print('----------------- aaaaaa')
@@ -569,6 +569,51 @@ class EzManager:
         return sorted(results, key=lambda x: x["search_value"], reverse=True)[:top_k]
 
 
+    async def search_similar_files(self, basefile: str, top_k: int = 5) -> list[dict]:
+        """
+        Perform semantic search using cached embeddings against a given file.
+        
+        Args:
+            file (str): The file path.
+            top_k (int): Number of top results to return.
+
+        Returns:
+            list[dict]: A list of matches with their file paths, names, and similarity scores.
+        """
+        base_embed_path = self.property_path(basefile, "embeddings.json")
+
+        async with aiofiles.open(base_embed_path, "r") as f:
+            base_embedding = np.array(json.loads(await f.read())) 
+            base_embedding = base_embedding.reshape(1, -1)
+
+        matches = []
+        
+        for file in self.files():
+            if file == basefile:
+                continue
+
+            try:
+                # Load cached embeddings
+                embed_path = self.property_path(file, "embeddings.json")
+                if not embed_path.exists():
+                    self.logger.warning(f"Embeddings not found for {file}. Skipping.")
+                    continue
+                
+                async with aiofiles.open(embed_path, "r") as f:
+                    file_embedding = np.array(json.loads(await f.read()))
+
+                # Calculate similarity
+                similarity_score = cosine_similarity(base_embedding, file_embedding.reshape(1, -1)).item()
+                matches.append({
+                    "file_path": str(file),
+                    "file_name": file.name,
+                    "similarity_score": similarity_score,
+                })
+            except Exception as e:
+                log_exception(self.logger, f"Failed to perform embedding search for {file}", e)
+
+        return sorted(matches, key=lambda x: x["similarity_score"], reverse=True)[:top_k]
+    
     async def search_using_embeddings(self, query: str, top_k: int = 5) -> list[dict]:
         """
         Perform semantic search using cached embeddings.

@@ -1,0 +1,29 @@
+name: easy-edital
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.12
+  - ipykernel
+  - pandas
+  - nltk
+  - numpy
+  - pytorch
+  - transformers
+  - sentence-transformers
+  - scikit-learn
+  - fastapi
+  - pytesseract
+  - matplotlib
+  - aiofiles
+  - python-docx
+  - beautifulsoup4
+  - pdf2image
+  - striprtf
+  - fuzzywuzzy
+  - pip
+  - pip:
+      - fitz
+      # - pymupdf
+      - frontend
+      - tools
