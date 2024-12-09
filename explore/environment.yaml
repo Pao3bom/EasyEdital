@@ -8,3 +8,7 @@ dependencies:
   - numpy
   - ipykernel
   - scikit-learn
+  - matplotlib
+  - tqdm
+  - nltk
+  - sentence-transformers
